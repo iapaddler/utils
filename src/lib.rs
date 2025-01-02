@@ -1,4 +1,10 @@
+use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
+use reqwest::Client;
 use std::env;
+
+const NOTIFY_URL: &str = "https://slack.com/api/chat.postMessage";
+const NOTIFY_CHANNEL: &str = "#notifications";
+const NOTIFY_ENV_VAR: &str = "APPVIEW_SLACKBOT_TOKEN";
 
 pub fn debug(msg: String) {
     let args: Vec<String> = env::args().collect();
@@ -35,6 +41,75 @@ pub fn debug(msg: String) {
             }
         }
     }
+}
+
+pub async fn notify(rising: bool) -> bool {
+    let key: String;
+    let api_key = env::var(NOTIFY_ENV_VAR);
+    match api_key {
+        Ok(ekey) => {
+            debug(format!("We have an API key"));
+            key = ekey;
+        }
+        Err(e) => {
+            eprintln!("Failed to send notification: no API key: {e}");
+            return false;
+        }
+    }
+
+    let client = Client::new();
+
+    let rise_fall = if rising == true {
+        "rising".to_string()
+    } else {
+        "falling".to_string()
+    };
+
+    let text = format!("Pressure is {rise_fall}");
+    let channel = NOTIFY_CHANNEL;
+
+    // The payload needed for the API: "token={}&channel={}&text={}",
+    let mut payload = String::new();
+    payload.push_str("token=");
+    payload.push_str(&key);
+    payload.push_str("&channel=");
+    payload.push_str(&channel);
+    payload.push_str("&text=");
+    payload.push_str(&text);
+
+    // Create headers; sending raw text, not json
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("application/x-www-form-urlencoded"),
+    );
+
+    let url = String::from(NOTIFY_URL);
+    let response = client
+        .post(url)
+        .headers(headers)
+        .body(payload) // raw plain text body.
+        .send()
+        .await;
+
+    //dbg!(&response);
+    let mut result: bool = false;
+    match response {
+        Ok(hres) => {
+            // The response is an involved json object.
+            // All we want is the value of ok, which is true or false.
+            // The only substring of ':true' is from ok on success.
+            // It's a short cut, just don't need any values in the json object.
+            let success = hres.text().await.unwrap();
+            if success.contains(":true") {
+                debug(format!("Notification successful"));
+                result = true;
+            }
+        }
+        Err(e) => eprintln!("response error: {e}"),
+    }
+
+    result
 }
 
 #[cfg(test)]
