@@ -3,7 +3,7 @@ use reqwest::Client;
 use std::env;
 
 const NOTIFY_URL: &str = "https://slack.com/api/chat.postMessage";
-const NOTIFY_CHANNEL: &str = "#notifications";
+const NOTIFY_CHANNEL: &str = "#drn";
 const NOTIFY_ENV_VAR: &str = "APPVIEW_SLACKBOT_TOKEN";
 
 pub fn debug(msg: String) {
@@ -43,7 +43,7 @@ pub fn debug(msg: String) {
     }
 }
 
-pub async fn notify(rising: bool) -> bool {
+pub async fn notify(message: String) -> bool {
     let key: String;
     let api_key = env::var(NOTIFY_ENV_VAR);
     match api_key {
@@ -58,14 +58,6 @@ pub async fn notify(rising: bool) -> bool {
     }
 
     let client = Client::new();
-
-    let rise_fall = if rising == true {
-        "rising".to_string()
-    } else {
-        "falling".to_string()
-    };
-
-    let text = format!("Pressure is {rise_fall}");
     let channel = NOTIFY_CHANNEL;
 
     // The payload needed for the API: "token={}&channel={}&text={}",
@@ -75,7 +67,7 @@ pub async fn notify(rising: bool) -> bool {
     payload.push_str("&channel=");
     payload.push_str(&channel);
     payload.push_str("&text=");
-    payload.push_str(&text);
+    payload.push_str(&message);
 
     // Create headers; sending raw text, not json
     let mut headers = HeaderMap::new();
