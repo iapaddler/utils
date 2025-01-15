@@ -1,0 +1,11 @@
+#ifndef SENSORAPI_H_
+#define SENSORAPI_H_
+
+typedef struct
+{
+    char *in_symbol;
+    void *out_addr;
+    int   after_appview;
+} param_t;
+
+#endif /* SENSORAPI_H_ */
