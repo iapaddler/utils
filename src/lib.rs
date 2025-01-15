@@ -163,7 +163,7 @@ pub async fn update_and_notify() {
         sdata = get_sensor_data();
 
         debug(format!(
-            "update thread: Temp {} Pressure {}",
+            "update thread({num_read}): Temp {} Pressure {}",
             sdata.temperature, sdata.pressure
         ));
 
