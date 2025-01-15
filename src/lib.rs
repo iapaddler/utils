@@ -81,7 +81,7 @@ pub fn get_sensor_data() -> sensor_data_t {
     }
 
     debug(format!(
-        "Sensor Data: Temp {} Pressure {}",
+        "get_sensor_data: Temp {} Pressure {}",
         sdata.temperature, sdata.pressure
     ));
 
@@ -157,11 +157,13 @@ pub async fn update_and_notify() {
     let mut first_pass_press: f64 = 0.00;
     let mut num_read: i32 = 0;
 
+    debug(format!("Update thread starting"));
+
     loop {
         sdata = get_sensor_data();
 
         debug(format!(
-            "Sensor Data: Temp {} Pressure {}",
+            "update thread: Temp {} Pressure {}",
             sdata.temperature, sdata.pressure
         ));
 
