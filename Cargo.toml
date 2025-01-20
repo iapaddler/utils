@@ -1,6 +1,6 @@
 [package]
 name = "utils"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 
 [dependencies]
@@ -9,3 +9,4 @@ ctrlc = "3.4.5"
 chrono = "0.4"
 libc = "0.2.162"
 rand = "0.8.5"
+actix-rt = "2.10.0"

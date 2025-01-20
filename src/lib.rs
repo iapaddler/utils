@@ -5,6 +5,7 @@ use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use reqwest::Client;
 use std::env;
 use std::process;
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -19,6 +20,13 @@ const HAVE_SENSOR: bool = true;
 pub struct sensor_data_t {
     pub temperature: c_double,
     pub pressure: c_double,
+}
+
+pub struct CommChannels {
+    pub cmd_tx: mpsc::Sender<String>,
+    pub cmd_rx: Arc<Mutex<mpsc::Receiver<String>>>,
+    pub data_tx: mpsc::Sender<String>,
+    pub data_rx: Arc<Mutex<mpsc::Receiver<String>>>,
 }
 
 #[link(name = "rsd", kind = "static")]
@@ -60,6 +68,19 @@ pub fn debug(msg: String) {
                 println!("{}", msg);
             }
         }
+    }
+}
+
+// Init command channels
+pub fn initialize_channels() -> CommChannels {
+    let (cmd_tx, cmd_rx) = mpsc::channel::<String>();
+    let (data_tx, data_rx) = mpsc::channel::<String>();
+
+    CommChannels {
+        cmd_tx,
+        cmd_rx: Arc::new(Mutex::new(cmd_rx)),
+        data_tx,
+        data_rx: Arc::new(Mutex::new(data_rx)),
     }
 }
 
@@ -114,6 +135,8 @@ pub async fn notify(message: String) -> bool {
     payload.push_str("&text=");
     payload.push_str(&message);
 
+    //debug(format!("Notify: {payload}"));
+
     // Create headers; sending raw text, not json
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -122,6 +145,7 @@ pub async fn notify(message: String) -> bool {
     );
 
     let url = String::from(NOTIFY_URL);
+
     let response = client
         .post(url)
         .headers(headers)
@@ -149,15 +173,17 @@ pub async fn notify(message: String) -> bool {
     result
 }
 
-pub async fn update_and_notify() {
+pub async fn update_and_notify(channels: CommChannels) {
     let mut sdata;
-
     let mut high_press: f64 = 0.00;
     let mut low_press: f64 = 0.00;
     let mut first_pass_press: f64 = 0.00;
     let mut num_read: i32 = 0;
+    let data_tx = channels.data_tx.clone();
 
     debug(format!("Update thread starting"));
+    let msg = String::from("Update starting");
+    notify(msg).await;
 
     loop {
         sdata = get_sensor_data();
@@ -166,6 +192,18 @@ pub async fn update_and_notify() {
             "update thread({num_read}): Temp {} Pressure {}",
             sdata.temperature, sdata.pressure
         ));
+
+        // Current local date and time
+        let now = Local::now();
+
+        // String format for the web server: 0.16 70.00 2025-01-18 16:06:50.530147456 -06:00
+        let wsdata = format!("{:.2} {:.2} {now}", sdata.pressure, sdata.temperature);
+
+        let dres = data_tx.send(wsdata);
+        match dres {
+            Ok(_) => debug(format!("notify thread sent data")),
+            Err(e) => eprintln!("Error on data send: {e}"),
+        };
 
         if first_pass_press == 0.0 {
             first_pass_press = sdata.pressure;
@@ -186,7 +224,7 @@ pub async fn update_and_notify() {
             let pstat: f64 = sdata.pressure - first_pass_press;
 
             debug(format!(
-                "pstat: {pstat} high: {high_press} low: {low_press}"
+                "pstat(num_read): {pstat} high: {high_press} low: {low_press}"
             ));
 
             let rising = if pstat > 0.00 {
