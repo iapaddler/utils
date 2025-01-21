@@ -182,8 +182,6 @@ pub async fn update_and_notify(channels: CommChannels) {
     let data_tx = channels.data_tx.clone();
 
     debug(format!("Update thread starting"));
-    let msg = String::from("Update starting");
-    notify(msg).await;
 
     loop {
         sdata = get_sensor_data();
