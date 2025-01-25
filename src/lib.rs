@@ -1,4 +1,5 @@
-use chrono::Local;
+use chrono::{Local, Utc};
+use lazy_static::lazy_static;
 use libc::{c_double, c_int};
 use rand::Rng;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
@@ -12,9 +13,17 @@ use std::time::Duration;
 const NOTIFY_URL: &str = "https://slack.com/api/chat.postMessage";
 const NOTIFY_CHANNEL: &str = "#drn";
 const NOTIFY_ENV_VAR: &str = "APPVIEW_SLACKBOT_TOKEN";
-const PERIOD: u64 = 300; // read every 5 mins
-const NUM_READS: i32 = 12; // report every 1 hour
-const HAVE_SENSOR: bool = true;
+pub const PERIOD: u64 = 5; //30; //300; // read every 5 mins
+const HAVE_SENSOR: bool = false; //true;
+const MAX_ENTRIES: usize = 100;
+
+// Could use features. Too confusing
+// DEBUG:
+//const NUM_MEASUREMENTS: i32 = 2;
+//const NUM_RUNS: i32 = 7;
+
+const NUM_MEASUREMENTS: i32 = 12; // report every 1 hour
+const NUM_RUNS: i32 = 60;
 
 #[repr(C)]
 pub struct sensor_data_t {
@@ -27,6 +36,40 @@ pub struct CommChannels {
     pub cmd_rx: Arc<Mutex<mpsc::Receiver<String>>>,
     pub data_tx: mpsc::Sender<String>,
     pub data_rx: Arc<Mutex<mpsc::Receiver<String>>>,
+}
+
+// Implementation used for static store of measurement data
+struct StateBuffer {
+    buffer: Vec<String>,
+    index: usize,
+}
+
+impl StateBuffer {
+    fn new() -> Self {
+        Self {
+            buffer: Vec::with_capacity(MAX_ENTRIES),
+            index: 0,
+        }
+    }
+
+    // after max size, replace oldest entry
+    fn add(&mut self, entry: String) {
+        if self.buffer.len() < MAX_ENTRIES {
+            self.buffer.push(entry);
+        } else {
+            self.buffer[self.index] = entry;
+        }
+        self.index = (self.index + 1) % MAX_ENTRIES;
+    }
+
+    // returns an iterator
+    fn get_all(&self) -> &[String] {
+        &self.buffer
+    }
+}
+
+lazy_static! {
+    static ref STATE: Mutex<StateBuffer> = Mutex::new(StateBuffer::new());
 }
 
 #[link(name = "rsd", kind = "static")]
@@ -174,50 +217,63 @@ pub async fn notify(message: String) -> bool {
 }
 
 pub async fn update_and_notify(channels: CommChannels) {
-    let mut sdata;
     let mut high_press: f64 = 0.00;
     let mut low_press: f64 = 0.00;
     let mut first_pass_press: f64 = 0.00;
     let mut num_read: i32 = 0;
+    let mut num_run: i32 = 0;
+    let mut buf = STATE.lock().unwrap();
     let data_tx = channels.data_tx.clone();
+    let rx = channels.cmd_rx.lock().unwrap();
+    let mut sdata = sensor_data_t {
+        temperature: 0.0,
+        pressure: 0.0,
+    };
 
     debug(format!("Update thread starting"));
 
     loop {
-        sdata = get_sensor_data();
+        // Getting measurements every N minutes
+        if num_run == NUM_RUNS {
+            num_run = 0;
 
-        debug(format!(
-            "update thread({num_read}): Temp {} Pressure {}",
-            sdata.temperature, sdata.pressure
-        ));
+            sdata = get_sensor_data();
 
-        // Current local date and time
-        let now = Local::now();
+            debug(format!(
+                "update thread({num_read}): Temp {} Pressure {}",
+                sdata.temperature, sdata.pressure
+            ));
 
-        // String format for the web server: 0.16 70.00 2025-01-18 16:06:50.530147456 -06:00
-        let wsdata = format!("{:.2} {:.2} {now}", sdata.pressure, sdata.temperature);
+            // Current local date and time
+            let now = Local::now();
+            let epoch = Utc::now();
+            let epoch_secs = epoch.timestamp();
 
-        let dres = data_tx.send(wsdata);
-        match dres {
-            Ok(_) => debug(format!("notify thread sent data")),
-            Err(e) => eprintln!("Error on data send: {e}"),
-        };
+            // String format for the web server: 0.16 70.00 1700000000 2025-01-18 16:06:50.530147456 -06:00
+            let wsdata = format!(
+                "{:.2} {:.2} {epoch_secs} {now}",
+                sdata.pressure, sdata.temperature
+            );
 
-        if first_pass_press == 0.0 {
-            first_pass_press = sdata.pressure;
+            buf.add(wsdata);
+
+            if first_pass_press == 0.0 {
+                first_pass_press = sdata.pressure;
+            }
+
+            if sdata.pressure > high_press {
+                high_press = sdata.pressure;
+            }
+
+            if (low_press == 0.0) | (sdata.pressure < low_press) {
+                low_press = sdata.pressure;
+            }
+
+            num_read += 1;
         }
 
-        if sdata.pressure > high_press {
-            high_press = sdata.pressure;
-        }
-
-        if (low_press == 0.0) | (sdata.pressure < low_press) {
-            low_press = sdata.pressure;
-        }
-
-        num_read += 1;
-
-        if num_read == NUM_READS {
+        // Sending notification every N measurements
+        if num_read == NUM_MEASUREMENTS {
             // last measurement - first measurement
             let pstat: f64 = sdata.pressure - first_pass_press;
 
@@ -247,6 +303,20 @@ pub async fn update_and_notify(channels: CommChannels) {
             num_read = 0;
         }
 
+        // Checking for a command every period
+        if let Ok(_msg) = rx.try_recv() {
+            // TODO: process a specific command
+            // For now, default to send data
+            for entry in buf.get_all() {
+                let dres = data_tx.send(entry.to_string());
+                match dres {
+                    Ok(_) => debug(format!("notify thread sent data")),
+                    Err(e) => eprintln!("Error on data send: {e}"),
+                };
+            }
+        }
+
+        num_run += 1;
         thread::sleep(Duration::from_secs(PERIOD));
     }
 }
