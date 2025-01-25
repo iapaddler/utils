@@ -14,16 +14,17 @@ const NOTIFY_URL: &str = "https://slack.com/api/chat.postMessage";
 const NOTIFY_CHANNEL: &str = "#drn";
 const NOTIFY_ENV_VAR: &str = "APPVIEW_SLACKBOT_TOKEN";
 pub const PERIOD: u64 = 5; //30; //300; // read every 5 mins
-const HAVE_SENSOR: bool = false; //true;
 const MAX_ENTRIES: usize = 100;
 
 // Could use features. Too confusing
 // DEBUG:
 //const NUM_MEASUREMENTS: i32 = 2;
 //const NUM_RUNS: i32 = 7;
+//const HAVE_SENSOR: bool = false;
 
 const NUM_MEASUREMENTS: i32 = 12; // report every 1 hour
 const NUM_RUNS: i32 = 60;
+const HAVE_SENSOR: bool = true;
 
 #[repr(C)]
 pub struct sensor_data_t {
