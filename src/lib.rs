@@ -221,6 +221,7 @@ pub async fn update_and_notify(channels: CommChannels) {
     let mut high_press: f64 = 0.00;
     let mut low_press: f64 = 0.00;
     let mut first_pass_press: f64 = 0.00;
+    let mut prev_press: f64 = 0.00;
     let mut num_read: i32 = 0;
     let mut num_run: i32 = 0;
     let mut buf = STATE.lock().unwrap();
@@ -246,14 +247,15 @@ pub async fn update_and_notify(channels: CommChannels) {
             ));
 
             // Current local date and time
-            let now = Local::now();
-            let epoch = Utc::now();
-            let epoch_secs = epoch.timestamp();
+            let dtime = Local::now().format("%Y-%m-%d %H:%M").to_string();
+            let epoch_secs = Utc::now().timestamp();
 
-            // String format for the web server: 0.16 70.00 1700000000 2025-01-18 16:06:50.530147456 -06:00
+            // String format for the web server: 0.16 70.00 -2.00 2025-01-18 16:06 (17000)
             let wsdata = format!(
-                "{:.2} {:.2} {epoch_secs} {now}",
-                sdata.pressure, sdata.temperature
+                "{:.2} {:.2} {:.2} {dtime} ({epoch_secs})",
+                sdata.pressure,
+                (sdata.temperature * 1.8) + 32.0,
+                sdata.pressure - prev_press
             );
 
             buf.add(wsdata);
@@ -270,6 +272,7 @@ pub async fn update_and_notify(channels: CommChannels) {
                 low_press = sdata.pressure;
             }
 
+            prev_press = sdata.pressure;
             num_read += 1;
         }
 
