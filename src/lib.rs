@@ -1,5 +1,4 @@
 use chrono::{Local, Utc};
-use lazy_static::lazy_static;
 use libc::{c_double, c_int};
 use rand::Rng;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
@@ -67,10 +66,6 @@ impl StateBuffer {
     fn get_all(&self) -> &[String] {
         &self.buffer
     }
-}
-
-lazy_static! {
-    static ref STATE: Mutex<StateBuffer> = Mutex::new(StateBuffer::new());
 }
 
 #[link(name = "rsd", kind = "static")]
@@ -224,7 +219,6 @@ pub async fn update_and_notify(channels: CommChannels) {
     let mut prev_press: f64 = 0.00;
     let mut num_read: i32 = 0;
     let mut num_run: i32 = 0;
-    let mut buf = STATE.lock().unwrap();
     let data_tx = channels.data_tx.clone();
     let rx = channels.cmd_rx.lock().unwrap();
     let mut sdata = sensor_data_t {
@@ -233,6 +227,9 @@ pub async fn update_and_notify(channels: CommChannels) {
     };
 
     debug(format!("Update thread starting"));
+
+    // Vector of strings for data
+    let mut buf = StateBuffer::new();
 
     loop {
         // Getting measurements every N minutes
