@@ -5,7 +5,7 @@ use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use reqwest::Client;
 use std::env;
 use std::process;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, LazyLock, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -24,6 +24,25 @@ const MAX_ENTRIES: usize = 100;
 const NUM_MEASUREMENTS: i32 = 12; // report every 1 hour
 const NUM_RUNS: i32 = 60;
 const HAVE_SENSOR: bool = true;
+
+#[derive(Clone, Debug)]
+pub struct Config {
+    pub debug: bool,
+    pub s1: bool,
+    pub s2: bool,
+    pub s3: bool,
+}
+
+impl Config {
+    fn new() -> Self {
+        Self {
+            debug: false,
+            s1: true,
+            s2: true,
+            s3: true,
+        }
+    }
+}
 
 #[repr(C)]
 pub struct sensor_data_t {
@@ -68,45 +87,48 @@ impl StateBuffer {
     }
 }
 
+pub static CONFIG: LazyLock<Mutex<Config>> = LazyLock::new(|| Mutex::new(Config::new()));
+
 #[link(name = "rsd", kind = "static")]
 extern "C" {
     fn getSensorData(sdata: &sensor_data_t) -> c_int;
 }
 
-pub fn debug(msg: String) {
+// Tried using clap. It's big and complex. This is simple, just a few bools.
+pub fn cli() -> Config {
+    let mut cfg = CONFIG.lock().unwrap();
     let args: Vec<String> = env::args().collect();
 
-    if args.len() >= 3 {
-        let arg = match args.get(1) {
-            Some(cmd) => cmd,
-            None => {
-                eprintln!("Unknown arguments provided");
-                return;
-            }
-        };
+    if args.len() > 1 {
+        let options = [
+            "-d".to_string(),
+            "-s1".to_string(),
+            "-s2".to_string(),
+            "-s3".to_string(),
+        ];
 
-        let dcmd = String::from("-d");
-        if arg == dcmd.as_str() {
-            let dval = match args.get(2) {
-                Some(val) => val,
-                None => {
-                    eprintln!("Unknown arguments provided!");
-                    return;
-                }
-            };
+        for i in 0..args.len() {
+            let arg = args.get(i).unwrap();
 
-            let gdbg = match dval.parse::<u64>() {
-                Ok(val) => val,
-                Err(e) => {
-                    eprintln!("Unable to parse number from argument: {}", e);
-                    return;
-                }
-            };
-
-            if gdbg > 0 {
-                println!("{}", msg);
+            if arg.contains(&options[0]) {
+                cfg.debug = true;
+            } else if arg.contains(&options[1]) {
+                cfg.s1 = false;
+            } else if arg.contains(&options[2]) {
+                cfg.s2 = false;
+            } else if arg.contains(&options[3]) {
+                cfg.s3 = false;
             }
         }
+    }
+
+    cfg.clone()
+}
+
+pub fn debug(msg: String) {
+    let cfg = CONFIG.lock().unwrap();
+    if cfg.debug == true {
+        println!("{}", msg);
     }
 }
 
@@ -212,7 +234,74 @@ pub async fn notify(message: String) -> bool {
     result
 }
 
-pub async fn update_and_notify(channels: CommChannels) {
+pub async fn particulate_sensor(channels: CommChannels) {
+    debug(format!("particulate_sensor: start"));
+
+    loop {
+        thread::sleep(Duration::from_secs(PERIOD));
+        debug(format!("particulate_sensor: run"));
+    }
+}
+
+pub async fn dummy_sensor(channels: CommChannels) {
+    let mut num_read: i32 = 0;
+    let mut num_run: i32 = 0;
+    let data_tx = channels.data_tx.clone();
+    let rx = channels.cmd_rx.lock().unwrap();
+
+    debug(format!("dummy_sensor: start"));
+
+    // Vector of strings for data
+    let mut buf = StateBuffer::new();
+
+    loop {
+        if num_run == NUM_RUNS {
+            num_run = 0;
+
+            // Current local date and time
+            let dtime = Local::now().format("%Y-%m-%d %H:%M").to_string();
+            let dval: f64 = rand::thread_rng().gen();
+
+            // String format for the web server: dummy sensor: value: 0.00 time
+            // Using random values for data
+            let ddata = format!("Dummy sensor: {dtime} {:.2}", dval);
+
+            buf.add(ddata);
+            num_read += 1;
+        }
+
+        debug(format!("dummy_sensor: run"));
+
+        // Sending notification every N measurements
+        if num_read == NUM_MEASUREMENTS {
+            let current_time = Local::now().time();
+            let display_time = current_time.format("%H:%M");
+            let dval: f64 = rand::thread_rng().gen();
+            let message = format!("Today at {display_time} the dummy value is {:.2}", dval);
+            notify(message).await;
+
+            // reset after every notify period
+            num_read = 0;
+        }
+
+        // Checking for a command every period
+        if let Ok(_msg) = rx.try_recv() {
+            // TODO: process a specific command
+            // For now, default to send data
+            for entry in buf.get_all() {
+                let dres = data_tx.send(entry.to_string());
+                match dres {
+                    Ok(_) => debug(format!("notify thread sent data")),
+                    Err(e) => eprintln!("Error on data send: {e}"),
+                };
+            }
+        }
+
+        num_run += 1;
+    }
+}
+
+pub async fn pressure_sensor(channels: CommChannels) {
     let mut high_press: f64 = 0.00;
     let mut low_press: f64 = 0.00;
     let mut first_pass_press: f64 = 0.00;
