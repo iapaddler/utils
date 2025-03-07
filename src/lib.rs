@@ -50,11 +50,46 @@ pub struct sensor_data_t {
     pub pressure: c_double,
 }
 
+#[derive(Debug)]
+pub struct HandlerChannels {
+    pub s1_cmd_tx: mpsc::Sender<String>,
+    pub s1_cmd_rx: Arc<Mutex<mpsc::Receiver<String>>>,
+    pub s1_data_tx: mpsc::Sender<String>,
+    pub s1_data_rx: Arc<Mutex<mpsc::Receiver<String>>>,
+
+    pub s2_cmd_tx: mpsc::Sender<String>,
+    pub s2_cmd_rx: Arc<Mutex<mpsc::Receiver<String>>>,
+    pub s2_data_tx: mpsc::Sender<String>,
+    pub s2_data_rx: Arc<Mutex<mpsc::Receiver<String>>>,
+
+    pub s3_cmd_tx: mpsc::Sender<String>,
+    pub s3_cmd_rx: Arc<Mutex<mpsc::Receiver<String>>>,
+    pub s3_data_tx: mpsc::Sender<String>,
+    pub s3_data_rx: Arc<Mutex<mpsc::Receiver<String>>>,
+}
+
+#[derive(Debug)]
 pub struct CommChannels {
     pub cmd_tx: mpsc::Sender<String>,
+    pub data_rx: Arc<Mutex<mpsc::Receiver<String>>>,
+}
+
+#[derive(Debug)]
+pub struct WebHandlerChannels {
+    pub s1_cmd_tx: mpsc::Sender<String>,
+    pub s1_data_rx: Arc<Mutex<mpsc::Receiver<String>>>,
+
+    pub s2_cmd_tx: mpsc::Sender<String>,
+    pub s2_data_rx: Arc<Mutex<mpsc::Receiver<String>>>,
+
+    pub s3_cmd_tx: mpsc::Sender<String>,
+    pub s3_data_rx: Arc<Mutex<mpsc::Receiver<String>>>,
+}
+
+#[derive(Debug)]
+pub struct SensorChannel {
     pub cmd_rx: Arc<Mutex<mpsc::Receiver<String>>>,
     pub data_tx: mpsc::Sender<String>,
-    pub data_rx: Arc<Mutex<mpsc::Receiver<String>>>,
 }
 
 // Implementation used for static store of measurement data
@@ -90,7 +125,7 @@ impl StateBuffer {
 pub static CONFIG: LazyLock<Mutex<Config>> = LazyLock::new(|| Mutex::new(Config::new()));
 
 #[link(name = "rsd", kind = "static")]
-extern "C" {
+unsafe extern "C" {
     fn getSensorData(sdata: &sensor_data_t) -> c_int;
 }
 
@@ -133,15 +168,27 @@ pub fn debug(msg: String) {
 }
 
 // Init command channels
-pub fn initialize_channels() -> CommChannels {
-    let (cmd_tx, cmd_rx) = mpsc::channel::<String>();
-    let (data_tx, data_rx) = mpsc::channel::<String>();
+pub fn initialize_channels() -> HandlerChannels {
+    let (s1_cmd_tx, s1_cmd_rx) = mpsc::channel::<String>();
+    let (s1_data_tx, s1_data_rx) = mpsc::channel::<String>();
+    let (s2_cmd_tx, s2_cmd_rx) = mpsc::channel::<String>();
+    let (s2_data_tx, s2_data_rx) = mpsc::channel::<String>();
+    let (s3_cmd_tx, s3_cmd_rx) = mpsc::channel::<String>();
+    let (s3_data_tx, s3_data_rx) = mpsc::channel::<String>();
 
-    CommChannels {
-        cmd_tx,
-        cmd_rx: Arc::new(Mutex::new(cmd_rx)),
-        data_tx,
-        data_rx: Arc::new(Mutex::new(data_rx)),
+    HandlerChannels {
+        s1_cmd_tx,
+        s1_cmd_rx: Arc::new(Mutex::new(s1_cmd_rx)),
+        s1_data_tx,
+        s1_data_rx: Arc::new(Mutex::new(s1_data_rx)),
+        s2_cmd_tx,
+        s2_cmd_rx: Arc::new(Mutex::new(s2_cmd_rx)),
+        s2_data_tx,
+        s2_data_rx: Arc::new(Mutex::new(s2_data_rx)),
+        s3_cmd_tx,
+        s3_cmd_rx: Arc::new(Mutex::new(s3_cmd_rx)),
+        s3_data_tx,
+        s3_data_rx: Arc::new(Mutex::new(s3_data_rx)),
     }
 }
 
@@ -157,8 +204,8 @@ pub fn get_sensor_data() -> sensor_data_t {
         }
     } else {
         // helps with test/debug to have values
-        let mut rng = rand::thread_rng();
-        sdata.pressure = rng.gen();
+        let mut rng = rand::rng();
+        sdata.pressure = rng.random::<f64>();
         sdata.temperature = 70.0;
     }
 
@@ -234,7 +281,7 @@ pub async fn notify(message: String) -> bool {
     result
 }
 
-pub async fn particulate_sensor(channels: CommChannels) {
+pub async fn particulate_sensor(_cmd_rx: mpsc::Receiver<String>, _data_tx: mpsc::Sender<String>) {
     debug(format!("particulate_sensor: start"));
 
     loop {
@@ -243,12 +290,11 @@ pub async fn particulate_sensor(channels: CommChannels) {
     }
 }
 
-pub async fn dummy_sensor(channels: CommChannels) {
+pub async fn dummy_sensor(cmd_rx: mpsc::Receiver<String>, data_tx: mpsc::Sender<String>) {
     let mut num_read: i32 = 0;
     let mut num_run: i32 = 0;
-    let data_tx = channels.data_tx.clone();
-    let rx = channels.cmd_rx.lock().unwrap();
-
+    let data_tx = data_tx.clone();
+    let cmd_rx = cmd_rx;
     debug(format!("dummy_sensor: start"));
 
     // Vector of strings for data
@@ -260,7 +306,8 @@ pub async fn dummy_sensor(channels: CommChannels) {
 
             // Current local date and time
             let dtime = Local::now().format("%Y-%m-%d %H:%M").to_string();
-            let dval: f64 = rand::thread_rng().gen();
+            let mut rng = rand::rng();
+            let dval: f64 = rng.random::<f64>();
 
             // String format for the web server: dummy sensor: value: 0.00 time
             // Using random values for data
@@ -270,52 +317,55 @@ pub async fn dummy_sensor(channels: CommChannels) {
             num_read += 1;
         }
 
-        debug(format!("dummy_sensor: run"));
+        //debug(format!("dummy_sensor: run"));
 
         // Sending notification every N measurements
         if num_read == NUM_MEASUREMENTS {
-            let current_time = Local::now().time();
-            let display_time = current_time.format("%H:%M");
-            let dval: f64 = rand::thread_rng().gen();
-            let message = format!("Today at {display_time} the dummy value is {:.2}", dval);
-            notify(message).await;
+            //let current_time = Local::now().time();
+            //let display_time = current_time.format("%H:%M");
+            //let dval: f64 = rand::thread_rng().gen();
+            //let message = format!("Today at {display_time} the dummy value is {:.2}", dval);
+            //notify(message).await;
+            //debug(format!("dummy_sensor: notify"));
 
             // reset after every notify period
             num_read = 0;
         }
 
         // Checking for a command every period
-        if let Ok(_msg) = rx.try_recv() {
+        if let Ok(_msg) = cmd_rx.try_recv() {
             // TODO: process a specific command
             // For now, default to send data
             for entry in buf.get_all() {
                 let dres = data_tx.send(entry.to_string());
                 match dres {
-                    Ok(_) => debug(format!("notify thread sent data")),
+                    Ok(_) => debug(format!("dummy sensor thread sent data")),
                     Err(e) => eprintln!("Error on data send: {e}"),
                 };
             }
         }
 
         num_run += 1;
+        thread::sleep(Duration::from_secs(PERIOD));
+        debug(format!("dummy_sensor: run"));
     }
 }
 
-pub async fn pressure_sensor(channels: CommChannels) {
+pub async fn pressure_sensor(cmd_rx: mpsc::Receiver<String>, data_tx: mpsc::Sender<String>) {
     let mut high_press: f64 = 0.00;
     let mut low_press: f64 = 0.00;
     let mut first_pass_press: f64 = 0.00;
     let mut prev_press: f64 = 0.00;
     let mut num_read: i32 = 0;
     let mut num_run: i32 = 0;
-    let data_tx = channels.data_tx.clone();
-    let rx = channels.cmd_rx.lock().unwrap();
+    let data_tx = data_tx.clone();
+    let cmd_rx = cmd_rx;
     let mut sdata = sensor_data_t {
         temperature: 0.0,
         pressure: 0.0,
     };
 
-    debug(format!("Update thread starting"));
+    debug(format!("Pressure sensor thread starting"));
 
     // Vector of strings for data
     let mut buf = StateBuffer::new();
@@ -328,7 +378,7 @@ pub async fn pressure_sensor(channels: CommChannels) {
             sdata = get_sensor_data();
 
             debug(format!(
-                "update thread({num_read}): Temp {} Pressure {}",
+                "pressure sensor thread({num_read}): Temp {} Pressure {}",
                 sdata.temperature, sdata.pressure
             ));
 
@@ -394,13 +444,13 @@ pub async fn pressure_sensor(channels: CommChannels) {
         }
 
         // Checking for a command every period
-        if let Ok(_msg) = rx.try_recv() {
+        if let Ok(_msg) = cmd_rx.try_recv() {
             // TODO: process a specific command
             // For now, default to send data
             for entry in buf.get_all() {
                 let dres = data_tx.send(entry.to_string());
                 match dres {
-                    Ok(_) => debug(format!("notify thread sent data")),
+                    Ok(_) => debug(format!("pressure sensor thread sent data")),
                     Err(e) => eprintln!("Error on data send: {e}"),
                 };
             }
