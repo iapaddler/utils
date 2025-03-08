@@ -12,7 +12,7 @@ use std::time::Duration;
 const NOTIFY_URL: &str = "https://slack.com/api/chat.postMessage";
 const NOTIFY_CHANNEL: &str = "#drn";
 const NOTIFY_ENV_VAR: &str = "APPVIEW_SLACKBOT_TOKEN";
-pub const PERIOD: u64 = 5; //30; //300; // read every 5 mins
+pub const PERIOD: u64 = 5;
 const MAX_ENTRIES: usize = 100;
 
 // Could use features. Too confusing
@@ -321,21 +321,31 @@ pub async fn dummy_sensor(cmd_rx: mpsc::Receiver<String>, data_tx: mpsc::Sender<
 
         // Sending notification every N measurements
         if num_read == NUM_MEASUREMENTS {
-            //let current_time = Local::now().time();
-            //let display_time = current_time.format("%H:%M");
-            //let dval: f64 = rand::thread_rng().gen();
-            //let message = format!("Today at {display_time} the dummy value is {:.2}", dval);
-            //notify(message).await;
-            //debug(format!("dummy_sensor: notify"));
-
+            // Don't notify on test data. For reference.
+            /*
+            let current_time = Local::now().time();
+            let display_time = current_time.format("%H:%M");
+            let dval: f64 = rand::thread_rng().gen();
+            let message = format!("Today at {display_time} the dummy value is {:.2}", dval);
+            notify(message).await;
+            debug(format!("dummy_sensor: notify"));
+             */
             // reset after every notify period
             num_read = 0;
         }
 
         // Checking for a command every period
         if let Ok(_msg) = cmd_rx.try_recv() {
+            debug(format!("dummy_sensor: received a command"));
             // TODO: process a specific command
             // For now, default to send data
+            let header = "Test Data\r\nDate Time Value".to_string();
+            let dres = data_tx.send(header);
+            match dres {
+                Ok(_) => debug(format!("dummy sensor thread sent a header")),
+                Err(e) => eprintln!("Error on data send: {e}"),
+            };
+
             for entry in buf.get_all() {
                 let dres = data_tx.send(entry.to_string());
                 match dres {
@@ -447,6 +457,16 @@ pub async fn pressure_sensor(cmd_rx: mpsc::Receiver<String>, data_tx: mpsc::Send
         if let Ok(_msg) = cmd_rx.try_recv() {
             // TODO: process a specific command
             // For now, default to send data
+            let header = format!(
+                "Pressure Sensor\r\nHigh pressure: {:.2} Low pressure: {:.2}",
+                high_press, low_press
+            );
+            let dres = data_tx.send(header);
+            match dres {
+                Ok(_) => debug(format!("dummy sensor thread sent a header")),
+                Err(e) => eprintln!("Error on data send: {e}"),
+            };
+
             for entry in buf.get_all() {
                 let dres = data_tx.send(entry.to_string());
                 match dres {
