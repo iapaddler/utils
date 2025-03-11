@@ -1,13 +1,9 @@
 [package]
 name = "utils"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 
 [dependencies]
 reqwest = { version = "0.11", features = ["json"] }
 ctrlc = "3.4.5"
-chrono = "0.4"
-libc = "0.2.162"
-rand = "0.9.0"
-actix-rt = "2.10.0"
-lazy_static = "1.5"
+
