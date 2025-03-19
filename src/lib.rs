@@ -8,7 +8,7 @@ const NOTIFY_URL: &str = "https://slack.com/api/chat.postMessage";
 const NOTIFY_CHANNEL: &str = "#drn";
 const NOTIFY_ENV_VAR: &str = "APPVIEW_SLACKBOT_TOKEN";
 pub const PERIOD: u64 = 5;
-const MAX_ENTRIES: usize = 100;
+const MAX_ENTRIES: usize = 288; // Assuming 5 mins per measurement, gives us 24 hours of data
 
 // Could use features. Too confusing
 // DEBUG:
