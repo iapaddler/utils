@@ -1,6 +1,10 @@
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use reqwest::Client;
+use serde::Serialize;
+use serde_json::{to_string, Result};
 use std::env;
+use std::io::Write;
+use std::net::TcpStream;
 use std::process;
 use std::sync::{mpsc, Arc, LazyLock, Mutex};
 
@@ -9,6 +13,7 @@ const NOTIFY_CHANNEL: &str = "#drn";
 const NOTIFY_ENV_VAR: &str = "APPVIEW_SLACKBOT_TOKEN";
 pub const PERIOD: u64 = 5;
 const MAX_ENTRIES: usize = 288; // Assuming 5 mins per measurement, gives us 24 hours of data
+const EXPORT_HOST: &str = "default.main.musing-faraday-83adewh.cribl.cloud:20000";
 
 // Could use features. Too confusing
 // DEBUG:
@@ -174,6 +179,34 @@ pub fn initialize_channels() -> HandlerChannels {
         s3_data_tx,
         s3_data_rx: Arc::new(Mutex::new(s3_data_rx)),
     }
+}
+
+/*
+ * Convert a serializable struct to JSON
+ * For my reference: (credit Google search AI)
+ * The compiler handles generic parameters to functions through a process called monomorphization, where
+ * it generates separate, specialized code for each concrete type the function is called with, effectively
+ * replacing generic types with their specific implementations at compile time.
+ * So, a small function getting repeated for each concrete type seems more efficient.
+*/
+pub fn to_json<T: Serialize>(data: &T) -> Result<String> {
+    to_string(data)
+}
+
+// TODO: make the export operation configurable
+pub fn export_data(jdata: &str) -> std::io::Result<()> {
+    // TODO: move the const to cmd line param or env var
+    let server_addr = EXPORT_HOST;
+    let mut stream = TcpStream::connect(server_addr)?;
+
+    debug(format!("Connected to export server at {}", server_addr));
+
+    // Send JSON data over the TCP connection
+    stream.write_all(jdata.as_bytes())?;
+    stream.write_all(b"\n")?; // Ensure the server knows the message boundary
+
+    debug(format!("export_data: Sent: {}", jdata));
+    Ok(())
 }
 
 pub async fn notify(message: String) -> bool {
