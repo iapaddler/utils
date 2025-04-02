@@ -3,6 +3,7 @@ use reqwest::Client;
 use serde::Serialize;
 use serde_json::{to_string, Result};
 use std::env;
+use std::fs;
 use std::io::Write;
 use std::net::TcpStream;
 use std::process;
@@ -14,16 +15,17 @@ const NOTIFY_ENV_VAR: &str = "APPVIEW_SLACKBOT_TOKEN";
 pub const PERIOD: u64 = 5;
 const MAX_ENTRIES: usize = 288; // Assuming 5 mins per measurement, gives us 24 hours of data
 const EXPORT_HOST: &str = "default.main.musing-faraday-83adewh.cribl.cloud:20000";
+pub const HW1: &str = "/dev/ttyUSB0";
+pub const HW2: &str = "/dev/i2c-1";
+pub const TEST_DATA: &str = "/tmp/sensor.dat";
 
 // Could use features. Too confusing
 // DEBUG:
 //pub const NUM_MEASUREMENTS: i32 = 2;
 //pub const NUM_RUNS: i32 = 7;
-//pub const HAVE_SENSOR: bool = false;
 
 pub const NUM_MEASUREMENTS: i32 = 12; // report every 1 hour
 pub const NUM_RUNS: i32 = 60;
-pub const HAVE_SENSOR: bool = true;
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -43,6 +45,8 @@ impl Config {
         }
     }
 }
+
+pub static CONFIG: LazyLock<Mutex<Config>> = LazyLock::new(|| Mutex::new(Config::new()));
 
 #[derive(Debug)]
 pub struct HandlerChannels {
@@ -116,11 +120,34 @@ impl StateBuffer {
     }
 }
 
-pub static CONFIG: LazyLock<Mutex<Config>> = LazyLock::new(|| Mutex::new(Config::new()));
+#[macro_export]
+macro_rules! get_guard {
+    ($lock:expr) => {
+        match $lock.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                $lock.clear_poison();
+                poisoned.into_inner()
+            }
+        }
+    };
+}
+
+pub fn have_hw() -> bool {
+    let mut hw: bool = false;
+
+    if fs::metadata(HW1).is_ok() & fs::metadata(HW2).is_ok() {
+        debug(format!("Sensor H/W exits"));
+        hw = true;
+    }
+
+    hw
+}
 
 // Tried using clap. It's big and complex. This is simple, just a few bools.
 pub fn cli() -> Config {
-    let mut cfg = CONFIG.lock().unwrap();
+    let mut cfg = get_guard!(&CONFIG);
+
     let args: Vec<String> = env::args().collect();
 
     if args.len() > 1 {
@@ -131,9 +158,7 @@ pub fn cli() -> Config {
             "-s3".to_string(),
         ];
 
-        for i in 0..args.len() {
-            let arg = args.get(i).unwrap();
-
+        for arg in &args {
             if arg.contains(&options[0]) {
                 cfg.debug = true;
             } else if arg.contains(&options[1]) {
@@ -150,7 +175,7 @@ pub fn cli() -> Config {
 }
 
 pub fn debug(msg: String) {
-    let cfg = CONFIG.lock().unwrap();
+    let cfg = get_guard!(&CONFIG);
     if cfg.debug == true {
         println!("{}", msg);
     }
@@ -261,7 +286,11 @@ pub async fn notify(message: String) -> bool {
             // All we want is the value of ok, which is true or false.
             // The only substring of ':true' is from ok on success.
             // It's a short cut, just don't need any values in the json object.
-            let success = hres.text().await.unwrap();
+            let success = match hres.text().await {
+                Ok(hrt) => hrt,
+                Err(e) => format!("notify: Error: json conversion: {e}"),
+            };
+
             if success.contains(":true") {
                 debug(format!("Notification successful"));
                 result = true;
@@ -286,9 +315,55 @@ pub fn ctl_c_handler() {
 mod tests {
     use super::*;
 
+    #[derive(serde::Serialize)]
+    struct TestStruct {
+        t1: u64,
+        t2: u64,
+    }
+
     #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+    // command line: $ cargo test --  cli_test --nocapture -- -- -d
+    // Tests the macro get_guard in order to obtain a CONFIG
+    fn cli_test() {
+        println!("cli test");
+        let cfg = cli();
+        //assert_eq!(cfg.debug, true);
+        if cfg.debug == true {
+            debug(format!("DEBUG"));
+        }
+    }
+
+    #[test]
+    //$ cargo test --  state_buffer_test
+    fn state_buffer_test() {
+        println!("state buffer test");
+        let mut buf = StateBuffer::new();
+
+        let mut i: usize;
+        for i in 0..MAX_ENTRIES {
+            buf.add(format!("sb.{i}"));
+        }
+
+        i = 0;
+        for entry in buf.get_all() {
+            let sbs = format!("sb.{i}");
+            assert_eq!(entry, &sbs);
+            i += 1;
+        }
+    }
+
+    #[test]
+    //$ cargo test --  to_json_test --nocapture
+    fn to_json_test() {
+        println!("json serialize test");
+        let jdata = TestStruct { t1: 99, t2: 100 };
+
+        match to_json(&jdata) {
+            Ok(jser) => assert_eq!(jser, "{\"t1\":99,\"t2\":100}".to_string()),
+            Err(e) => {
+                eprintln!("Error: json serialization: {e}");
+                panic!();
+            }
+        }
     }
 }
