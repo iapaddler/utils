@@ -1,11 +1,13 @@
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use reqwest::Client;
 use serde::Serialize;
-use serde_json::{to_string, Result};
+use serde_json;
 use std::env;
 use std::fs;
 use std::io::Write;
+use std::io::{stderr, stdout};
 use std::net::TcpStream;
+use std::path::PathBuf;
 use std::process;
 use std::sync::{mpsc, Arc, LazyLock, Mutex};
 
@@ -18,6 +20,10 @@ const EXPORT_HOST: &str = "default.main.musing-faraday-83adewh.cribl.cloud:20000
 pub const HW1: &str = "/dev/ttyUSB0";
 pub const HW2: &str = "/dev/i2c-1";
 pub const TEST_DATA: &str = "/tmp/sensor.dat";
+pub const DBG: LogLevel = LogLevel::Debug;
+pub const ERR: LogLevel = LogLevel::Error;
+pub const INF: LogLevel = LogLevel::Info;
+pub const WAR: LogLevel = LogLevel::Warn;
 
 // Could use features. Too confusing
 // DEBUG:
@@ -27,12 +33,23 @@ pub const TEST_DATA: &str = "/tmp/sensor.dat";
 pub const NUM_MEASUREMENTS: i32 = 12; // report every 1 hour
 pub const NUM_RUNS: i32 = 60;
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
+pub enum LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+#[derive(Clone)]
 pub struct Config {
     pub debug: bool,
     pub s1: bool,
     pub s2: bool,
     pub s3: bool,
+    pub llevel: LogLevel,
+    pub lfile: PathBuf,
 }
 
 impl Config {
@@ -42,6 +59,8 @@ impl Config {
             s1: true,
             s2: true,
             s3: true,
+            llevel: LogLevel::Info,
+            lfile: PathBuf::from("/tmp/rserve.log"),
         }
     }
 }
@@ -133,11 +152,55 @@ macro_rules! get_guard {
     };
 }
 
+pub fn get_cfg() -> Config {
+    let cfg = get_guard!(&CONFIG);
+
+    cfg.clone()
+}
+
+pub fn set_cfg(new_cfg: Config) {
+    let mut cfg = get_guard!(&CONFIG);
+
+    *cfg = new_cfg;
+}
+
+/*
+ * Errors are written to the log file defined in cfg.
+ */
+fn perr(cfg: &Config, level: LogLevel, perr: String) -> Result<(), std::io::Error> {
+    let mut lfile = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&cfg.lfile)?;
+    let _ = writeln!(lfile, "[{:?}] {}", level, perr);
+    Ok(())
+}
+
+pub fn ulog<W: std::io::Write>(mut out: W, level: LogLevel, msg: String) {
+    let cfg = get_cfg();
+    let _ = match level {
+        LogLevel::Trace => Ok(if cfg.llevel <= LogLevel::Trace {
+            let _ = writeln!(out, "[{:?}] {}", level, msg);
+        }),
+        LogLevel::Debug => Ok(if cfg.llevel <= LogLevel::Debug {
+            let _ = writeln!(out, "[{:?}] {}", level, msg);
+        }),
+        // for now, always emit info, warn & error
+        LogLevel::Info => writeln!(out, "[{:?}] {}", level, msg),
+        LogLevel::Warn => writeln!(out, "[{:?}] {}", level, msg),
+        LogLevel::Error => Ok({
+            // Intent is output to stderr & the log file
+            let _ = writeln!(out, "[{:?}] {}", level, msg);
+            let _ = perr(&cfg, level, msg);
+        }),
+    };
+}
+
 pub fn have_hw() -> bool {
     let mut hw: bool = false;
 
     if fs::metadata(HW1).is_ok() & fs::metadata(HW2).is_ok() {
-        debug(format!("Sensor H/W exits"));
+        ulog(stdout(), DBG, "Sensor H/W exists".to_string());
         hw = true;
     }
 
@@ -161,6 +224,7 @@ pub fn cli() -> Config {
         for arg in &args {
             if arg.contains(&options[0]) {
                 cfg.debug = true;
+                cfg.llevel = DBG;
             } else if arg.contains(&options[1]) {
                 cfg.s1 = false;
             } else if arg.contains(&options[2]) {
@@ -174,15 +238,10 @@ pub fn cli() -> Config {
     cfg.clone()
 }
 
-pub fn debug(msg: String) {
-    let cfg = get_guard!(&CONFIG);
-    if cfg.debug == true {
-        println!("{}", msg);
-    }
-}
-
 // Init command channels
 pub fn initialize_channels() -> HandlerChannels {
+    ulog(stdout(), INF, "initialize_channels".to_string());
+
     let (s1_cmd_tx, s1_cmd_rx) = mpsc::channel::<String>();
     let (s1_data_tx, s1_data_rx) = mpsc::channel::<String>();
     let (s2_cmd_tx, s2_cmd_rx) = mpsc::channel::<String>();
@@ -214,8 +273,8 @@ pub fn initialize_channels() -> HandlerChannels {
  * replacing generic types with their specific implementations at compile time.
  * So, a small function getting repeated for each concrete type seems more efficient.
 */
-pub fn to_json<T: Serialize>(data: &T) -> Result<String> {
-    to_string(data)
+pub fn to_json<T: Serialize>(data: &T) -> serde_json::Result<String> {
+    serde_json::to_string(data)
 }
 
 // TODO: make the export operation configurable
@@ -224,13 +283,17 @@ pub fn export_data(jdata: &str) -> std::io::Result<()> {
     let server_addr = EXPORT_HOST;
     let mut stream = TcpStream::connect(server_addr)?;
 
-    debug(format!("Connected to export server at {}", server_addr));
+    ulog(
+        stdout(),
+        DBG,
+        format!("Connected to export server at {}", server_addr),
+    );
 
     // Send JSON data over the TCP connection
     stream.write_all(jdata.as_bytes())?;
     stream.write_all(b"\n")?; // Ensure the server knows the message boundary
 
-    debug(format!("export_data: Sent: {}", jdata));
+    ulog(stdout(), DBG, format!("export_data: Sent: {}", jdata));
     Ok(())
 }
 
@@ -239,11 +302,15 @@ pub async fn notify(message: String) -> bool {
     let api_key = env::var(NOTIFY_ENV_VAR);
     match api_key {
         Ok(ekey) => {
-            debug(format!("We have an API key"));
+            ulog(stdout(), DBG, "We have an API key".to_string());
             key = ekey;
         }
         Err(e) => {
-            eprintln!("Failed to send notification: no API key: {e}");
+            ulog(
+                stderr(),
+                ERR,
+                format!("Failed to send notification: no API key: {e}"),
+            );
             return false;
         }
     }
@@ -260,7 +327,7 @@ pub async fn notify(message: String) -> bool {
     payload.push_str("&text=");
     payload.push_str(&message);
 
-    //debug(format!("Notify: {payload}"));
+    ulog(stdout(), DBG, format!("Notify: {payload}"));
 
     // Create headers; sending raw text, not json
     let mut headers = HeaderMap::new();
@@ -292,7 +359,7 @@ pub async fn notify(message: String) -> bool {
             };
 
             if success.contains(":true") {
-                debug(format!("Notification successful"));
+                ulog(stdout(), DBG, "Notification Successful".to_string());
                 result = true;
             }
         }
@@ -322,15 +389,47 @@ mod tests {
     }
 
     #[test]
-    // command line: $ cargo test --  cli_test --nocapture -- -- -d
+    // command line: $ cargo test --  cli_test --nocapture
     // Tests the macro get_guard in order to obtain a CONFIG
     fn cli_test() {
         println!("cli test");
-        let cfg = cli();
-        //assert_eq!(cfg.debug, true);
-        if cfg.debug == true {
-            debug(format!("DEBUG"));
-        }
+        let mut cfg = cli();
+        cfg.llevel = DBG;
+        cfg.lfile = PathBuf::from("test_file");
+        set_cfg(cfg);
+
+        println!("Testing set cfg");
+        let cfg2 = get_cfg();
+
+        let mut buf = Vec::new();
+        ulog(&mut buf, DBG, "Testing Debug set".to_string());
+
+        let output = String::from_utf8_lossy(&buf);
+
+        println!("Captured output: {}", output);
+        assert_eq!(output.trim(), "[Debug] Testing Debug set");
+
+        println!("{:?}", cfg2.lfile);
+        let path_str = cfg2.lfile.to_string_lossy();
+        assert!(path_str.contains("test_file"));
+    }
+
+    #[test]
+    // command line: $ cargo test --  log_test --nocapture -- -- -d
+    // Tests the macro get_guard in order to obtain a CONFIG
+    fn log_test() {
+        ulog(stdout(), WAR, "TEST: Warn".to_string());
+        ulog(stderr(), ERR, "TEST: Error".to_string());
+        ulog(stdout(), DBG, "TEST: Debug".to_string());
+        ulog(stdout(), INF, "TEST: Info".to_string());
+
+        let mut buf = Vec::new();
+        ulog(&mut buf, INF, "Testing log output".to_string());
+
+        let output = String::from_utf8_lossy(&buf);
+
+        println!("Captured output: {}", output);
+        assert_eq!(output.trim(), "[Info] Testing log output");
     }
 
     #[test]
