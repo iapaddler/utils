@@ -207,34 +207,117 @@ pub fn have_hw() -> bool {
     hw
 }
 
-// Tried using clap. It's big and complex. This is simple, just a few bools.
+pub fn validate_f64(val: f64) -> f64 {
+    let mut rval = 0.0;
+    if val.is_normal() {
+        rval = val;
+    }
+    rval
+}
+
+pub fn validate_f32(val: f32) -> f32 {
+    let mut rval = 0.0;
+    if val.is_normal() {
+        rval = val;
+    }
+    rval
+}
+
+fn usage() {
+    eprintln!("rserve [command]");
+    eprintln!("\t-s1 Disable sensor 1");
+    eprintln!("\t-s2 Disable sensor 2");
+    eprintln!("\t-s3 Disable sensor 3");
+    eprintln!("\t-d | --debug Enable debug logs and debug mode");
+    eprintln!("\t-h | --help Display usage detail");
+    eprintln!("\t-l | --level Define log level");
+    eprintln!("\t\tLogLevels:");
+    eprintln!("\t\ttrace|debug|dbg|info|inf|warn|warning|error|err");
+    process::exit(-1);
+}
+
+fn get_level(lvl: &String) -> LogLevel {
+    match lvl.as_str() {
+        "trace" => return LogLevel::Trace,
+        "debug" => return LogLevel::Debug,
+        "dbg" => return LogLevel::Debug,
+        "info" => return LogLevel::Info,
+        "inf" => return LogLevel::Info,
+        "warn" => return LogLevel::Warn,
+        "warning" => return LogLevel::Warn,
+        "error" => return LogLevel::Error,
+        "err" => return LogLevel::Error,
+        _ => {
+            eprintln!("Error: log level {} isn't supported", lvl.as_str());
+            usage();
+            LogLevel::Debug
+        }
+    }
+}
+
+// Tried using clap. It's big and complex. This is simple, just a few options.
 pub fn cli() -> Config {
     let mut cfg = get_guard!(&CONFIG);
 
     let args: Vec<String> = env::args().collect();
 
     if args.len() > 1 {
-        let options = [
-            "-d".to_string(),
-            "-s1".to_string(),
-            "-s2".to_string(),
-            "-s3".to_string(),
-        ];
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            if arg.contains("rserve") {
+                continue;
+            }
 
-        for arg in &args {
-            if arg.contains(&options[0]) {
-                cfg.debug = true;
-                cfg.llevel = DBG;
-            } else if arg.contains(&options[1]) {
-                cfg.s1 = false;
-            } else if arg.contains(&options[2]) {
-                cfg.s2 = false;
-            } else if arg.contains(&options[3]) {
-                cfg.s3 = false;
+            match arg.as_str() {
+                "-s1" => {
+                    cfg.s1 = false;
+                }
+
+                "-s2" => {
+                    cfg.s2 = false;
+                }
+
+                "-s3" => {
+                    cfg.s3 = false;
+                }
+
+                "--debug" => {
+                    cfg.debug = true;
+                    cfg.llevel = DBG;
+                }
+                "-d" => {
+                    cfg.debug = true;
+                    cfg.llevel = DBG;
+                }
+                "--help" => {
+                    usage();
+                }
+                "-h" => {
+                    usage();
+                }
+                "--level" => {
+                    if let Some(lvl) = iter.next() {
+                        cfg.llevel = get_level(lvl);
+                    } else {
+                        eprintln!("level requires a log level value");
+                        usage();
+                    }
+                }
+                "-l" => {
+                    if let Some(lvl) = iter.next() {
+                        cfg.llevel = get_level(lvl);
+                    } else {
+                        eprintln!("level requires a log level value");
+                        usage();
+                    }
+                }
+                _ => {
+                    eprintln!("arg {} is not valid", arg.as_str());
+                    usage();
+                }
             }
         }
     }
-
     cfg.clone()
 }
 
@@ -389,11 +472,11 @@ mod tests {
     }
 
     #[test]
-    // command line: $ cargo test --  cli_test --nocapture
+    // command line: $ cargo test --  cfg_test --nocapture
     // Tests the macro get_guard in order to obtain a CONFIG
-    fn cli_test() {
-        println!("cli test");
-        let mut cfg = cli();
+    fn cfg_test() {
+        println!("cfg test");
+        let mut cfg = Config::new();
         cfg.llevel = DBG;
         cfg.lfile = PathBuf::from("test_file");
         set_cfg(cfg);
@@ -415,7 +498,9 @@ mod tests {
     }
 
     #[test]
-    // command line: $ cargo test --  log_test --nocapture -- -- -d
+    // command line:
+    // $ cargo test -- log_test --nocapture -- -- -d
+    // $ cargo test -- log_test --nocapture -- -- --level debug
     // Tests the macro get_guard in order to obtain a CONFIG
     fn log_test() {
         ulog(stdout(), WAR, "TEST: Warn".to_string());
@@ -464,5 +549,31 @@ mod tests {
                 panic!();
             }
         }
+    }
+
+    #[test]
+    //$ cargo test -- fpval_test --nocapture -- -- -d
+    fn fpval_test() {
+        println!("f64 & f32 validation test");
+        let mut v1: f64 = 0.0;
+        let mut v2: f32 = 0.0;
+
+        assert_eq!(validate_f64(v1), 0.0);
+        assert_eq!(validate_f32(v2), 0.0);
+
+        v1 = 12.99;
+        v2 = 42.42;
+        assert_eq!(validate_f64(v1), 12.99);
+        assert_eq!(validate_f32(v2), 42.42);
+
+        v1 = -12.12;
+        v2 = -42.99;
+        assert_eq!(validate_f64(v1), -12.12);
+        assert_eq!(validate_f32(v2), -42.99);
+
+        let nan1 = f64::NAN;
+        let nan2 = f32::NAN;
+        assert_eq!(validate_f64(nan1), 0.0);
+        assert_eq!(validate_f32(nan2), 0.0);
     }
 }
