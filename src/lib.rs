@@ -1,7 +1,6 @@
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use reqwest::Client;
 use serde::Serialize;
-use serde_json;
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -139,6 +138,12 @@ impl StateBuffer {
     }
 }
 
+impl Default for StateBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[macro_export]
 macro_rules! get_guard {
     ($lock:expr) => {
@@ -178,21 +183,29 @@ fn perr(cfg: &Config, level: LogLevel, perr: String) -> Result<(), std::io::Erro
 
 pub fn ulog<W: std::io::Write>(mut out: W, level: LogLevel, msg: String) {
     let cfg = get_cfg();
-    let _ = match level {
-        LogLevel::Trace => Ok(if cfg.llevel <= LogLevel::Trace {
-            let _ = writeln!(out, "[{:?}] {}", level, msg);
-        }),
-        LogLevel::Debug => Ok(if cfg.llevel <= LogLevel::Debug {
-            let _ = writeln!(out, "[{:?}] {}", level, msg);
-        }),
+    match level {
+        LogLevel::Trace => {
+            if cfg.llevel <= LogLevel::Trace {
+                let _ = writeln!(out, "[{:?}] {}", level, msg);
+            };
+        }
+        LogLevel::Debug => {
+            if cfg.llevel <= LogLevel::Debug {
+                let _ = writeln!(out, "[{:?}] {}", level, msg);
+            };
+        }
         // for now, always emit info, warn & error
-        LogLevel::Info => writeln!(out, "[{:?}] {}", level, msg),
-        LogLevel::Warn => writeln!(out, "[{:?}] {}", level, msg),
-        LogLevel::Error => Ok({
+        LogLevel::Info => {
+            let _ = writeln!(out, "[{:?}] {}", level, msg);
+        }
+        LogLevel::Warn => {
+            let _ = writeln!(out, "[{:?}] {}", level, msg);
+        }
+        LogLevel::Error => {
             // Intent is output to stderr & the log file
             let _ = writeln!(out, "[{:?}] {}", level, msg);
             let _ = perr(&cfg, level, msg);
-        }),
+        }
     };
 }
 
@@ -236,19 +249,19 @@ fn usage() {
     process::exit(-1);
 }
 
-fn get_level(lvl: &String) -> LogLevel {
-    match lvl.as_str() {
-        "trace" => return LogLevel::Trace,
-        "debug" => return LogLevel::Debug,
-        "dbg" => return LogLevel::Debug,
-        "info" => return LogLevel::Info,
-        "inf" => return LogLevel::Info,
-        "warn" => return LogLevel::Warn,
-        "warning" => return LogLevel::Warn,
-        "error" => return LogLevel::Error,
-        "err" => return LogLevel::Error,
+fn get_level(lvl: &str) -> LogLevel {
+    match lvl {
+        "trace" => LogLevel::Trace,
+        "debug" => LogLevel::Debug,
+        "dbg" => LogLevel::Debug,
+        "info" => LogLevel::Info,
+        "inf" => LogLevel::Info,
+        "warn" => LogLevel::Warn,
+        "warning" => LogLevel::Warn,
+        "error" => LogLevel::Error,
+        "err" => LogLevel::Error,
         _ => {
-            eprintln!("Error: log level {} isn't supported", lvl.as_str());
+            eprintln!("Error: log level {lvl} isn't supported");
             usage();
             LogLevel::Debug
         }
@@ -381,12 +394,11 @@ pub fn export_data(jdata: &str) -> std::io::Result<()> {
 }
 
 pub async fn notify(message: String) -> bool {
-    let key: String;
     let api_key = env::var(NOTIFY_ENV_VAR);
-    match api_key {
+    let key: String = match api_key {
         Ok(ekey) => {
             ulog(stdout(), DBG, String::from("We have an API key"));
-            key = ekey;
+            ekey
         }
         Err(e) => {
             ulog(
@@ -396,7 +408,7 @@ pub async fn notify(message: String) -> bool {
             );
             return false;
         }
-    }
+    };
 
     let client = Client::new();
     let channel = NOTIFY_CHANNEL;
@@ -406,7 +418,7 @@ pub async fn notify(message: String) -> bool {
     payload.push_str("token=");
     payload.push_str(&key);
     payload.push_str("&channel=");
-    payload.push_str(&channel);
+    payload.push_str(channel);
     payload.push_str("&text=");
     payload.push_str(&message);
 
