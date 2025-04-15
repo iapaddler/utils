@@ -200,7 +200,7 @@ pub fn have_hw() -> bool {
     let mut hw: bool = false;
 
     if fs::metadata(HW1).is_ok() & fs::metadata(HW2).is_ok() {
-        ulog(stdout(), DBG, "Sensor H/W exists".to_string());
+        ulog(stdout(), DBG, String::from("Sensor H/W exists"));
         hw = true;
     }
 
@@ -323,7 +323,7 @@ pub fn cli() -> Config {
 
 // Init command channels
 pub fn initialize_channels() -> HandlerChannels {
-    ulog(stdout(), INF, "initialize_channels".to_string());
+    ulog(stdout(), INF, String::from("initialize_channels"));
 
     let (s1_cmd_tx, s1_cmd_rx) = mpsc::channel::<String>();
     let (s1_data_tx, s1_data_rx) = mpsc::channel::<String>();
@@ -385,7 +385,7 @@ pub async fn notify(message: String) -> bool {
     let api_key = env::var(NOTIFY_ENV_VAR);
     match api_key {
         Ok(ekey) => {
-            ulog(stdout(), DBG, "We have an API key".to_string());
+            ulog(stdout(), DBG, String::from("We have an API key"));
             key = ekey;
         }
         Err(e) => {
@@ -442,7 +442,7 @@ pub async fn notify(message: String) -> bool {
             };
 
             if success.contains(":true") {
-                ulog(stdout(), DBG, "Notification Successful".to_string());
+                ulog(stdout(), DBG, String::from("Notification Successful"));
                 result = true;
             }
         }
@@ -485,7 +485,7 @@ mod tests {
         let cfg2 = get_cfg();
 
         let mut buf = Vec::new();
-        ulog(&mut buf, DBG, "Testing Debug set".to_string());
+        ulog(&mut buf, DBG, String::from("Testing Debug set"));
 
         let output = String::from_utf8_lossy(&buf);
 
@@ -503,13 +503,13 @@ mod tests {
     // $ cargo test -- log_test --nocapture -- -- --level debug
     // Tests the macro get_guard in order to obtain a CONFIG
     fn log_test() {
-        ulog(stdout(), WAR, "TEST: Warn".to_string());
-        ulog(stderr(), ERR, "TEST: Error".to_string());
-        ulog(stdout(), DBG, "TEST: Debug".to_string());
-        ulog(stdout(), INF, "TEST: Info".to_string());
+        ulog(stdout(), WAR, String::from("TEST: Warn"));
+        ulog(stderr(), ERR, String::from("TEST: Error"));
+        ulog(stdout(), DBG, String::from("TEST: Debug"));
+        ulog(stdout(), INF, String::from("TEST: Info"));
 
         let mut buf = Vec::new();
-        ulog(&mut buf, INF, "Testing log output".to_string());
+        ulog(&mut buf, INF, String::from("Testing log output"));
 
         let output = String::from_utf8_lossy(&buf);
 
@@ -543,7 +543,7 @@ mod tests {
         let jdata = TestStruct { t1: 99, t2: 100 };
 
         match to_json(&jdata) {
-            Ok(jser) => assert_eq!(jser, "{\"t1\":99,\"t2\":100}".to_string()),
+            Ok(jser) => assert_eq!(jser, String::from("{\"t1\":99,\"t2\":100}")),
             Err(e) => {
                 eprintln!("Error: json serialization: {e}");
                 panic!();
