@@ -374,6 +374,7 @@ pub fn to_json<T: Serialize>(data: &T) -> serde_json::Result<String> {
 }
 
 // TODO: make the export operation configurable
+// Return values from TCP operations return early to the caller
 pub fn export_data(jdata: &str) -> std::io::Result<()> {
     // TODO: move the const to cmd line param or env var
     let server_addr = EXPORT_HOST;
@@ -410,7 +411,19 @@ pub async fn notify(message: String) -> bool {
         }
     };
 
-    let client = Client::new();
+    // Using builder as opposed to New handles an error without panic
+    let client = match Client::builder().build() {
+        Ok(cl) => cl,
+        Err(e) => {
+            ulog(
+                stderr(),
+                ERR,
+                format!("Error: Failed to create a reqwest client {e}"),
+            );
+            return false;
+        }
+    };
+
     let channel = NOTIFY_CHANNEL;
 
     // The payload needed for the API: "token={}&channel={}&text={}",
@@ -458,7 +471,7 @@ pub async fn notify(message: String) -> bool {
                 result = true;
             }
         }
-        Err(e) => eprintln!("response error: {e}"),
+        Err(e) => ulog(stderr(), ERR, format!("response error: {e}")),
     }
 
     result
@@ -481,6 +494,12 @@ mod tests {
     struct TestStruct {
         t1: u64,
         t2: u64,
+    }
+
+    #[derive(Serialize)]
+    struct TestExport {
+        pressure: u64,
+        delta: f64,
     }
 
     #[test]
@@ -587,5 +606,33 @@ mod tests {
         let nan2 = f32::NAN;
         assert_eq!(validate_f64(nan1), 0.0);
         assert_eq!(validate_f32(nan2), 0.0);
+    }
+
+    #[test]
+    #[ignore]
+    //$ cargo test -- export_test --nocapture -- -- -d
+    //$ cargo test -- --ignored  --show-output
+    fn export_test() {
+        let ex_data = TestExport {
+            pressure: 93777,
+            delta: -77.77,
+        };
+
+        println!("Export Test");
+        match to_json(&ex_data) {
+            Ok(jdata) => match export_data(&jdata) {
+                Ok(_) => ulog(stdout(), INF, String::from("Exported pressure data")),
+                Err(e) => ulog(
+                    stderr(),
+                    ERR,
+                    format!("Error: can't export pressure data: {e}"),
+                ),
+            },
+            Err(e) => ulog(
+                stderr(),
+                ERR,
+                format!("Error: can't convert pressure sensor data to json: {e}"),
+            ),
+        }
     }
 }
