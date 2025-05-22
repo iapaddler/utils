@@ -49,6 +49,7 @@ pub struct Config {
     pub s3: bool,
     pub llevel: LogLevel,
     pub lfile: PathBuf,
+    pub notify_state: bool,
 }
 
 impl Config {
@@ -60,6 +61,7 @@ impl Config {
             s3: true,
             llevel: LogLevel::Info,
             lfile: PathBuf::from("/tmp/rserve.log"),
+            notify_state: false,
         }
     }
 }
@@ -241,6 +243,8 @@ fn usage() {
     eprintln!("\t-s1 Disable sensor 1");
     eprintln!("\t-s2 Disable sensor 2");
     eprintln!("\t-s3 Disable sensor 3");
+    eprintln!("\t-ns Enable notify state");
+    eprintln!("\t--state Enable notify state");
     eprintln!("\t-d | --debug Enable debug logs and debug mode");
     eprintln!("\t-h | --help Display usage detail");
     eprintln!("\t-l | --level Define log level");
@@ -301,6 +305,12 @@ pub fn cli() -> Config {
                 "-d" => {
                     cfg.debug = true;
                     cfg.llevel = DBG;
+                }
+                "-ns" => {
+                    cfg.notify_state = true;
+                }
+                "--state" => {
+                    cfg.notify_state = true;
                 }
                 "--help" => {
                     usage();
